@@ -1,0 +1,7 @@
+{
+  "name":"civilservice-zone","version":"1.0.0","private":true,
+  "description":"CivilService Zone marketplace and service booking platform",
+  "main":"server.js","scripts":{"start":"node server.js"},
+  "engines":{"node":">=20"},
+  "dependencies":{"bcryptjs":"^2.4.3","express":"^4.21.2","jsonwebtoken":"^9.0.2"}
+}
