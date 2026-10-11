@@ -24,17 +24,6 @@ async function ai(q){
  return answer;
 }
 const server=http.createServer(async(req,res)=>{try{const u=url.parse(req.url,true),p=u.pathname;if(req.method==='OPTIONS')return json(res,204,{});
-if (p === '/') {
-    const filePath = path.join(__dirname, 'public', 'index.html');
-    if (fs.existsSync(filePath)) {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        return res.end(fs.readFileSync(filePath));
-    } else {
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
-        return res.end('Index file not found');
-    }
-}
-
 if(p==='/api/health')return json(res,200,{ok:true,service:'CivilService Zone V6',aiConfigured:Boolean(String(process.env.GEMINI_API_KEY||'').trim()),aiModel:process.env.GEMINI_MODEL||'gemini-2.5-flash',time:new Date().toISOString()});
 if(p==='/api/auth/register'&&req.method==='POST'){const x=await body(req),role=['Customer','Seller','Provider'].includes(x.role)?x.role:'Customer',mobile=String(x.mobile||'').replace(/\D/g,''),email=String(x.email||'').trim().toLowerCase(),address=String(x.address||'').trim(),pincode=String(x.pincode||'').replace(/\D/g,'');if(String(x.name||'').trim().length<2||!/^[0-9]{10}$/.test(mobile)||!address)return json(res,400,{error:'Name, valid 10-digit mobile and full address required.'});if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return json(res,400,{error:'Valid email ID डालें।'});if(pincode&&!/^[0-9]{6}$/.test(pincode))return json(res,400,{error:'PIN code must be 6 digits.'});if(!email&&!mobile)return json(res,400,{error:'Mobile or email is required.'});if(db.users.some(a=>a.mobile===mobile&&a.role===role))return json(res,409,{error:'This mobile is already registered for this role.'});if(email&&db.users.some(a=>String(a.email||'').toLowerCase()===email&&a.role===role))return json(res,409,{error:'This email is already registered for this role.'});const u={id:db.next.user++,name:String(x.name).trim(),mobile,email,place:String(x.place||''),address,pincode,latitude:x.latitude?Number(x.latitude):null,longitude:x.longitude?Number(x.longitude):null,role,referralCode:String(x.referralCode||''),createdAt:new Date().toISOString()};db.users.push(u);const t=token();db.sessions.push({token:t,userId:u.id,createdAt:new Date().toISOString()});save();return json(res,200,{token:t,user:safe(u)})}
 if(p==='/api/auth/login'&&req.method==='POST'){const x=await body(req),identifier=String(x.identifier||x.mobile||x.email||'').trim(),email=identifier.toLowerCase(),mobile=identifier.replace(/\D/g,''),byEmail=x.loginBy==='email'||identifier.includes('@');if(!identifier)return json(res,400,{error:'Registered mobile number or email is required.'});const matches=db.users.filter(a=>byEmail?String(a.email||'').toLowerCase()===email:a.mobile===mobile);const u=matches.find(a=>a.role===x.role)||(matches.length===1?matches[0]:null);if(!u)return json(res,401,{error:matches.length?'इस contact पर कई role accounts हैं। सही role चुनें।':'इस mobile/email पर registered account नहीं मिला।'});const t=token();db.sessions.push({token:t,userId:u.id,createdAt:new Date().toISOString()});save();return json(res,200,{token:t,user:safe(u)})}
@@ -62,6 +51,21 @@ if(p==='/api/admin/data'&&req.method==='GET'){if(!admin(req))return json(res,403
 if(p==='/api/ai/ask'&&req.method==='POST'){const x=await body(req);if(!x.question)return json(res,400,{error:'Question required'});try{return json(res,200,{answer:await ai(x.question)})}catch(e){return json(res,502,{error:e.message||'AI service error'})}}
 if(p.startsWith('/uploads/')){const f=path.basename(p),full=path.join(UPLOADS,f);if(!full.startsWith(UPLOADS)||!fs.existsSync(full))return text(res,404,'Not found','text/plain');return fs.readFile(full,(e,b)=>e?text(res,404,'Not found','text/plain'):text(res,200,b,mime(f)))}
 if(p.startsWith('/api/'))return json(res,404,{error:'API route not found'});
-const file=path.join(ROOT,'public','index.html');if(fs.existsSync(file))return text(res,200,fs.readFileSync(file),'text/html; charset=utf-8');const fallback=path.join(ROOT,'index.html');if(fs.existsSync(fallback))return text(res,200,fs.readFileSync(fallback),'text/html; charset=utf-8');return text(res,404,'Not found','text/plain');
+// Serve the website home page even if the files were uploaded into a common subfolder.
+function findHomeFile(){
+ const direct=[path.join(ROOT,'public','index.html'),path.join(ROOT,'index.html'),path.join(ROOT,'dist','index.html'),path.join(ROOT,'build','index.html'),path.join(ROOT,'client','index.html'),path.join(ROOT,'client','public','index.html')];
+ for(const f of direct){try{if(fs.existsSync(f)&&fs.statSync(f).isFile())return f}catch{}}
+ const skip=new Set(['.git','node_modules','android-wrapper','data','uploads']);
+ function walk(dir,depth){if(depth<0)return null;let entries;try{entries=fs.readdirSync(dir,{withFileTypes:true})}catch{return null}
+  for(const e of entries){if(e.isFile()&&e.name.toLowerCase()==='index.html')return path.join(dir,e.name)}
+  for(const e of entries){if(e.isDirectory()&&!skip.has(e.name)&&!e.name.startsWith('.')){const found=walk(path.join(dir,e.name),depth-1);if(found)return found}}
+  return null;
+ }
+ return walk(ROOT,3);
+}
+const homeFile=findHomeFile();
+if(homeFile)return text(res,200,fs.readFileSync(homeFile),'text/html; charset=utf-8');
+console.error('Website home page not found. Expected public/index.html or index.html under:',ROOT);
+return text(res,500,'CivilService Zone website file missing. Ensure public/index.html (or index.html) is uploaded to the same Render Root Directory as server.js.','text/plain; charset=utf-8');
 }catch(e){console.error(e);if(!res.headersSent)json(res,500,{error:e.message||'Server error'})}});
 server.listen(PORT,()=>console.log(`CivilService Zone V6 running on ${PORT}`));
